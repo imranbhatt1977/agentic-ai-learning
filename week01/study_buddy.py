@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Dict
 
 from simple_llm import call_ollama_llm  # reuse your wrapper
@@ -93,7 +93,7 @@ def study_buddy_loop(goal: str):
 
         history.append(
             {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(datetime.UTC).isoformat(),
                 "user": user_input,
                 "assistant": assistant_reply,
             }
