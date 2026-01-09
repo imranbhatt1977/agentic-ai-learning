@@ -40,6 +40,7 @@ class AgentState:
     messages: List[ChatMessage] = field(default_factory=list)
     need_tool: bool = False
     summarize: bool = False
+    need_note: bool = False
 
 # --- 2. A tiny kb_lookup tool (like Week 2, but simpler) ---------------------
 
@@ -65,7 +66,25 @@ def kb_lookup(query: str) -> str:
         "I don't have an exact answer in my small knowledge base yet. "
         "Try asking about 'AI agent' or 'LangGraph'."
     )
+import os
 
+# Define where LangGraph notes will go
+
+LANGGRAPH_NOTES_DIR = os.path.join("notes", "langgraph_notes")
+
+def write_note_tool(content: str) -> str:
+    """
+    Appends content to a markdown file in the langgraph_notes folder.
+    """
+    os.makedirs(LANGGRAPH_NOTES_DIR, exist_ok=True)
+
+    file_path = os.path.join(LANGGRAPH_NOTES_DIR, "session_notes.md")
+    abs_path = os.path.abspath(file_path)
+
+    with open(file_path, "a", encoding="utf-8") as f:
+        f.write(content.strip() + "\n\n")
+
+    return f"Note written to: {abs_path}"
 
 # --- 3. Define the nodes (functions) -----------------------------------------
 
@@ -86,11 +105,21 @@ def router_node(state: AgentState) -> AgentState:
 
     text = last_msg.content.lower()
 
+    # Debug Print
+    print(f"--- Router checking text: '{text}' ---")
+
     # Decide if we need the KB tool
     state.need_tool = ("ai agent" in text) or ("langgraph" in text)
 
     # Decide if we need to summarize
-    state.summarize = ("summary" in text) or ("summarize our conversation" in text)
+    state.summarize = ("summary" in text) or ("summarize" in text)
+
+    #return state
+
+    # Decide if we need to write notes
+    state.need_note = any(word in text for word in ["note", "save", "record"])
+
+    print(f"---Router set need_note to: {state.need_note} ---")
 
     return state
 
@@ -167,7 +196,32 @@ def summarize_node(state: AgentState) -> AgentState:
 
     return state
 
-# --- 4. Build the graph ------------------------------------------------------
+# ---4. Create the note_node function ------------------------------------------------------
+
+def note_node(state: AgentState) -> AgentState:
+    # DEBUG
+    if state.need_note:
+        print(">>> NOTE NODE: I HAVE WORK TO DO! <<<")
+    else:
+        print(">>> NOTE NODE SKIPPED <<<")
+        return state
+
+    assistant_msgs = [m for m in state.messages if m.role == "assistant"]
+
+    if assistant_msgs:
+        content_to_save = assistant_msgs[-1].content
+        print(">>> WRITING NOTE NOW... <<<")
+        result = write_note_tool(content_to_save)
+        print(f">>> TOOL RESULT: {result}")
+
+        state.messages.append(
+            ChatMessage(role="tool", content=result)
+        )
+
+    state.need_note = False
+    return state
+
+# --- 5. Build the graph ------------------------------------------------------
 
 
 def build_graph():
@@ -186,22 +240,25 @@ def build_graph():
     """
     graph = StateGraph(AgentState)
 
+    # Add the nodes
     graph.add_node("router", router_node)
     graph.add_node("tools", tool_node)
     graph.add_node("llm", llm_node)
+    graph.add_node("note", note_node)
     graph.add_node("summarize", summarize_node)
 
     # Edges
     graph.set_entry_point("router")
     graph.add_edge("router", "tools")
     graph.add_edge("tools", "llm")
-    graph.add_edge("llm", "summarize")
+    graph.add_edge("llm", "note")
+    graph.add_edge("note", "summarize")
     graph.add_edge("summarize", END)
 
     return graph.compile()
 
 
-# --- 5. Simple CLI loop ------------------------------------------------------
+# --- 6. Simple CLI loop ------------------------------------------------------
 
 def interactive_loop():
     app = build_graph()
