@@ -41,6 +41,8 @@ class AgentState:
     need_tool: bool = False
     summarize: bool = False
     need_note: bool = False
+    note_approved: bool = False
+    pending_note: str = ""
 
 # --- 2. A tiny kb_lookup tool (like Week 2, but simpler) ---------------------
 
@@ -85,6 +87,18 @@ def write_note_tool(content: str) -> str:
         f.write(content.strip() + "\n\n")
 
     return f"Note written to: {abs_path}"
+# Helper for note generation
+
+def generate_note_draft(text: str) -> str:
+    prompt = (
+        "Convert the following content into a concise, factual note.\n"
+        "Rules:\n"
+        "_ Use '_' hyphen bullets only (ASCII)\n"
+        "_ No conversational tone\n"
+        "_ 3-6 bullet points or a short paragraph\n\n"
+        f"{text}\n\n\nNOTE:"
+    )
+    return call_ollama_llm(prompt).strip()
 
 # --- 3. Define the nodes (functions) -----------------------------------------
 
@@ -196,33 +210,71 @@ def summarize_node(state: AgentState) -> AgentState:
 
     return state
 
-# ---4. Create the note_node function ------------------------------------------------------
+# ---5. Create review_node ------------------
 
-def note_node(state: AgentState) -> AgentState:
-    # DEBUG
-    if state.need_note:
-        print(">>> NOTE NODE: I HAVE WORK TO DO! <<<")
-    else:
-        print(">>> NOTE NODE SKIPPED <<<")
+def review_node(state: AgentState) -> AgentState:
+    """
+    security layer: Asks the use to approve the note content.
+    """
+
+    if not state.need_note:
         return state
-
+    
     assistant_msgs = [m for m in state.messages if m.role == "assistant"]
+    if not assistant_msgs:
+        return state
+    content = assistant_msgs[-1].content
+    note_draft = generate_note_draft(content)
+    state.pending_note = note_draft
 
-    if assistant_msgs:
-        content_to_save = assistant_msgs[-1].content
-        print(">>> WRITING NOTE NOW... <<<")
-        result = write_note_tool(content_to_save)
-        print(f">>> TOOL RESULT: {result}")
+    print("\n--- SECURITY REVIEW: PENDING NOTE ---")
+    print(state.pending_note)
+    print("------------------------------------")
 
-        state.messages.append(
-            ChatMessage(role="tool", content=result)
-        )
+    user_choice = input("Do you approve saving this note? (yes/no): ").strip().lower()
 
-    state.need_note = False
+    if user_choice == "yes":
+        state.note_approved = True
+        print(">>> Access Granted. Proceeding to save....")
+    else:
+        state.pending_note = ""
+        state.note_approved = False
+        state.need_note = False
+        print(">>> Access Denied. Note will not be saved.")
+        state.messages.append(ChatMessage(role="assistant", content="Note save cancelled by user."))
     return state
 
-# --- 5. Build the graph ------------------------------------------------------
+# ---6. Create the note_node function ------------------------------------------------------
 
+def note_node(state: AgentState) -> AgentState:
+    if not state.need_note or not state.note_approved:
+        return state
+
+    if state.pending_note.strip():
+        result = write_note_tool(state.pending_note)
+        state.messages.append(ChatMessage(role="tool", content=result))
+        state.messages.append(ChatMessage(role="assistant", content="Note saved (approved)."))
+    else:
+        state.messages.append(ChatMessage(role="assistant", content="No note content to save."))
+
+    state.need_note = False
+    state.note_approved = False
+    state.pending_note = ""
+    return state
+
+
+# --- 6. Build the graph ------------------------------------------------------
+
+def router_logic(state: AgentState) -> Literal["tools", "llm", "review"]:
+    """
+    This function decides the NEXT node to visit.
+    """
+
+    if state.need_tool:
+        return "tools"
+    if state.need_note:
+        return "review"
+    return "llm"
 
 def build_graph():
     """
@@ -244,21 +296,36 @@ def build_graph():
     graph.add_node("router", router_node)
     graph.add_node("tools", tool_node)
     graph.add_node("llm", llm_node)
+    graph.add_node("review", review_node)
     graph.add_node("note", note_node)
     graph.add_node("summarize", summarize_node)
 
-    # Edges
     graph.set_entry_point("router")
-    graph.add_edge("router", "tools")
+
+    #--- NEW: Conditional Routing ---
+    # After 'router', call 'router_logic' to decide where to go next
+    graph.add_conditional_edges(
+        "router",
+        router_logic,
+        {
+            "tools": "tools",
+            "llm": "llm",
+            "review": "review"
+        }
+    )
+
+
+    # Edges
     graph.add_edge("tools", "llm")
-    graph.add_edge("llm", "note")
+    graph.add_edge("llm", "review")
+    graph.add_edge("review", "note")
     graph.add_edge("note", "summarize")
     graph.add_edge("summarize", END)
 
     return graph.compile()
 
 
-# --- 6. Simple CLI loop ------------------------------------------------------
+# --- 7. Simple CLI loop ------------------------------------------------------
 
 def interactive_loop():
     app = build_graph()

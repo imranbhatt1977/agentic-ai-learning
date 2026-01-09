@@ -1,6 +1,8 @@
-TOOL output: Note saved successfully!
+_Artificial Intelligence (AI) Agent Characteristics_
 
-Note: An AI agent is a system that has the ability to perceive its surroundings, think critically about what's happening, and make decisions to accomplish specific tasks or goals. It can learn, reason, and take actions based on its understanding of the world around it.
-
-Let me know if you'd like to revisit this note or add anything new!
+* Perceives its environment
+* Reasons about the environment and takes actions to achieve specific goals
+* Can learn from experiences and adapt to new situations
+* Makes decisions based on data and logic
+* Interacts with the world in a more intelligent and autonomous way
 
